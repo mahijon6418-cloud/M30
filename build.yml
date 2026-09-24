@@ -1,0 +1,181 @@
+name: Build OVPN30 Signed APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build OVPN30 UI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout OVPN30 wrapper
+        uses: actions/checkout@v4
+
+      - name: Setup Java 11
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -e
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-32" \
+            "build-tools;32.0.0" \
+            "ndk;24.0.8215888"
+
+      - name: Checkout OpenVPN XOR engine
+        uses: actions/checkout@v4
+        with:
+          repository: lawtancool/ics-openvpn-xor
+          ref: master
+          submodules: recursive
+          path: upstream
+
+      - name: Create signing keystore
+        shell: bash
+        run: |
+          set -e
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/ovpn30.keystore" \
+            -alias ovpn30 \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass ovpn30password \
+            -keypass ovpn30password \
+            -dname "CN=OVPN30, O=OVPN30, C=US"
+
+      - name: Patch ONLY the real main app
+        shell: bash
+        run: |
+          set -e
+          python3 scripts/patch_upstream.py
+
+          echo "=== MAIN MANIFEST ==="
+          grep -n "android:icon\|android:label" upstream/main/src/main/AndroidManifest.xml || true
+
+          echo "=== UI LAUNCHER ==="
+          grep -n -A8 -B3 "android.intent.category.LAUNCHER" \
+            upstream/main/src/ui/AndroidManifest.xml
+
+      - name: Prepare Gradle
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -e
+          chmod +x gradlew
+          mkdir -p ~/.gradle
+
+          cat > ~/.gradle/gradle.properties <<EOF
+          android.useAndroidX=true
+          android.enableJetifier=true
+          android.enableUnitTestBinaryResources=false
+          org.gradle.jvmargs=-Xmx4096M
+          org.gradle.daemon=false
+          keystoreFile=$RUNNER_TEMP/ovpn30.keystore
+          keystorePassword=ovpn30password
+          keystoreAliasPassword=ovpn30password
+          keystoreAlias=ovpn30
+          EOF
+
+      - name: Show main UI tasks
+        working-directory: upstream
+        shell: bash
+        run: |
+          ./gradlew :main:tasks --all --stacktrace > main-tasks.txt
+          grep -E "assemble.*(Ui|ui).*Release|assembleUiRelease" main-tasks.txt || true
+
+      - name: Build REAL OpenVPN UI APK
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -e
+          echo "Building :main:assembleUiRelease"
+          ./gradlew :main:assembleUiRelease --no-daemon --stacktrace
+
+      - name: Locate main APK
+        shell: bash
+        run: |
+          set -e
+          echo "=== ALL MAIN APKS ==="
+          find upstream/main/build/outputs/apk -type f -name '*.apk' -print
+
+          APK=$(find upstream/main/build/outputs/apk -type f -name '*.apk' \
+            | grep -E 'ui.*release|release.*universal|universal' \
+            | head -n1 || true)
+
+          if [ -z "$APK" ]; then
+            APK=$(find upstream/main/build/outputs/apk -type f -name '*.apk' | head -n1 || true)
+          fi
+
+          test -n "$APK"
+          mkdir -p unsigned
+          cp "$APK" unsigned/OVPN30-unsigned.apk
+          ls -lh unsigned/OVPN30-unsigned.apk
+
+      - name: Find zipalign and apksigner
+        shell: bash
+        run: |
+          set -e
+          ZIPALIGN=$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -n1)
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n1)
+          test -n "$ZIPALIGN"
+          test -n "$APKSIGNER"
+          echo "ZIPALIGN=$ZIPALIGN" >> "$GITHUB_ENV"
+          echo "APKSIGNER=$APKSIGNER" >> "$GITHUB_ENV"
+
+      - name: Zipalign APK
+        shell: bash
+        run: |
+          set -e
+          mkdir -p release
+          "$ZIPALIGN" -f -v 4 \
+            unsigned/OVPN30-unsigned.apk \
+            release/OVPN30-aligned.apk
+
+      - name: Sign APK
+        shell: bash
+        run: |
+          set -e
+          "$APKSIGNER" sign \
+            --ks "$RUNNER_TEMP/ovpn30.keystore" \
+            --ks-key-alias ovpn30 \
+            --ks-pass pass:ovpn30password \
+            --key-pass pass:ovpn30password \
+            --out release/OVPN30-Scramble.apk \
+            release/OVPN30-aligned.apk
+
+      - name: Verify APK and launcher
+        shell: bash
+        run: |
+          set -e
+          APK=release/OVPN30-Scramble.apk
+          "$APKSIGNER" verify --verbose "$APK"
+          unzip -t "$APK" >/dev/null
+          echo "=== FINAL APK ==="
+          ls -lh "$APK"
+          sha256sum "$APK"
+          echo "=== SIGNATURE ==="
+          unzip -l "$APK" | grep -E 'META-INF/.*(RSA|SF)' || true
+
+      - name: Upload OVPN30 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: OVPN30-Scramble-Signed
+          path: release/OVPN30-Scramble.apk
+          if-no-files-found: error
+          retention-days: 30
