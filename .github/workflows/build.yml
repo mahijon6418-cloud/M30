@@ -1,16 +1,17 @@
-name: Build OVPN30 Signed APK
+name: Build OVPN30
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build OVPN30 Custom UI
+    name: Build OVPN30 APK
     runs-on: ubuntu-latest
 
     steps:
@@ -24,25 +25,19 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+      - name: Setup Android
+        uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK components
-        shell: bash
+      - name: Install Android SDK
         run: |
-          set -e
-
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-
           sdkmanager \
             "platform-tools" \
             "platforms;android-32" \
             "build-tools;32.0.0" \
             "ndk;24.0.8215888"
 
-      # IMPORTANT:
-      # Do NOT change v0.7.37-xor to master.
-      - name: Checkout OpenVPN XOR engine
+      - name: Checkout OpenVPN XOR
         uses: actions/checkout@v4
         with:
           repository: lawtancool/ics-openvpn-xor
@@ -50,33 +45,16 @@ jobs:
           submodules: recursive
           path: upstream
 
-      - name: Create signing keystore
+      - name: Create OVPN30 custom UI
         shell: bash
         run: |
-          set -e
 
-          keytool -genkeypair -v \
-            -keystore "$RUNNER_TEMP/ovpn30.keystore" \
-            -alias ovpn30 \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass ovpn30password \
-            -keypass ovpn30password \
-            -dname "CN=OVPN30,O=OVPN30,C=US"
-
-      # ==========================================================
-      # OVPN30 CUSTOM DASHBOARD
-      # ==========================================================
-      - name: Install OVPN30 custom dashboard
-        shell: bash
-        run: |
           set -e
 
           mkdir -p upstream/main/src/ui/java/de/blinkt/openvpn/activities
           mkdir -p upstream/main/src/main/res/drawable
 
-          cat > upstream/main/src/ui/java/de/blinkt/openvpn/activities/OVPN30Activity.java <<'JAVA'
+          cat > upstream/main/src/ui/java/de/blinkt/openvpn/activities/MainActivity.java <<'JAVA'
 package de.blinkt.openvpn.activities;
 
 import android.app.Activity;
@@ -87,13 +65,15 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
-import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import java.util.Collection;
 
 import de.blinkt.openvpn.LaunchVPN;
 import de.blinkt.openvpn.R;
@@ -106,143 +86,102 @@ import de.blinkt.openvpn.activities.FileSelect;
 import de.blinkt.openvpn.activities.LogWindow;
 import de.blinkt.openvpn.fragments.VPNProfileList;
 
-public class OVPN30Activity extends BaseActivity {
+public class MainActivity extends BaseActivity {
 
-    private static final int SELECT_PROFILE = 430;
-    private static final int IMPORT_PROFILE = 431;
+    private static final int REQUEST_FILE = 500;
+    private static final int REQUEST_IMPORT = 501;
 
     private LinearLayout root;
-    private TextView statusText;
-    private TextView profileCount;
-    private TextView connectionDot;
+    private TextView status;
+    private TextView profiles;
 
-    private int dp(float value) {
+    private int dp(int value) {
         return (int) (
-                value * getResources().getDisplayMetrics().density + 0.5f
+            value * getResources()
+                .getDisplayMetrics()
+                .density + 0.5f
         );
     }
 
-    private GradientDrawable rounded(int color, float radius) {
-        GradientDrawable d = new GradientDrawable();
+    private GradientDrawable bg(
+            int color,
+            int radius
+    ) {
+        GradientDrawable d =
+                new GradientDrawable();
+
         d.setColor(color);
         d.setCornerRadius(dp(radius));
+
         return d;
     }
 
-    private TextView text(
-            String value,
-            float size,
+    private TextView label(
+            String text,
+            int size,
             int color,
             boolean bold
     ) {
-        TextView t = new TextView(this);
+        TextView t =
+                new TextView(this);
 
-        t.setText(value);
+        t.setText(text);
         t.setTextSize(size);
         t.setTextColor(color);
-        t.setGravity(Gravity.CENTER_VERTICAL);
+        t.setGravity(
+                Gravity.CENTER_VERTICAL
+        );
 
         t.setTypeface(
                 Typeface.create(
                         "sans-serif",
-                        bold ? Typeface.BOLD : Typeface.NORMAL
+                        bold
+                                ? Typeface.BOLD
+                                : Typeface.NORMAL
                 )
         );
 
         return t;
     }
 
-    private LinearLayout card() {
+    private Button button(
+            String text
+    ) {
+        Button b =
+                new Button(this);
 
-        LinearLayout c = new LinearLayout(this);
-
-        c.setOrientation(LinearLayout.VERTICAL);
-
-        c.setPadding(
-                dp(18),
-                dp(16),
-                dp(18),
-                dp(16)
-        );
-
-        c.setBackground(
-                rounded(
-                        Color.rgb(15, 24, 40),
-                        20
-                )
-        );
-
-        c.setElevation(dp(3));
-
-        LinearLayout.LayoutParams p =
-                new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                );
-
-        p.setMargins(
-                0,
-                dp(7),
-                0,
-                dp(7)
-        );
-
-        c.setLayoutParams(p);
-
-        return c;
-    }
-
-    private Button action(String label) {
-
-        Button b = new Button(this);
-
-        b.setText(label);
+        b.setText(text);
         b.setTextSize(15);
         b.setTextColor(Color.WHITE);
         b.setAllCaps(false);
-        b.setGravity(Gravity.CENTER);
 
         b.setTypeface(
                 Typeface.DEFAULT,
                 Typeface.BOLD
         );
 
-        b.setPadding(
-                dp(12),
-                dp(4),
-                dp(12),
-                dp(4)
-        );
-
         b.setBackground(
-                rounded(
-                        Color.rgb(24, 116, 235),
-                        16
+                bg(
+                        Color.rgb(25, 116, 235),
+                        18
                 )
         );
 
-        LinearLayout.LayoutParams p =
+        b.setLayoutParams(
                 new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
-                        dp(54)
-                );
-
-        p.setMargins(
-                0,
-                dp(6),
-                0,
-                dp(6)
+                        dp(55)
+                )
         );
-
-        b.setLayoutParams(p);
 
         return b;
     }
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-
-        super.onCreate(savedInstanceState);
+    protected void onCreate(
+            Bundle state
+    ) {
+        super.onCreate(state);
 
         if (getSupportActionBar() != null) {
             getSupportActionBar().hide();
@@ -256,229 +195,278 @@ public class OVPN30Activity extends BaseActivity {
                 Color.rgb(5, 8, 15)
         );
 
-        buildDashboard();
+        createDashboard();
     }
 
-    @Override
-    protected void onResume() {
+    private void createDashboard() {
 
-        super.onResume();
+        ScrollView scroll =
+                new ScrollView(this);
 
-        if (root != null) {
-            refreshStatus();
-        }
-    }
-
-    private void buildDashboard() {
-
-        FrameLayout frame = new FrameLayout(this);
-
-        frame.setBackgroundColor(
+        scroll.setBackgroundColor(
                 Color.rgb(5, 8, 15)
         );
 
-        ScrollView scroll = new ScrollView(this);
-
-        scroll.setFillViewport(true);
-
-        root = new LinearLayout(this);
+        root =
+                new LinearLayout(this);
 
         root.setOrientation(
                 LinearLayout.VERTICAL
         );
 
         root.setPadding(
-                dp(18),
                 dp(20),
-                dp(18),
-                dp(24)
+                dp(28),
+                dp(20),
+                dp(30)
         );
 
-        TextView brand =
-                text(
+        scroll.addView(root);
+
+        TextView title =
+                label(
                         "OVPN30",
-                        31,
+                        34,
                         Color.WHITE,
                         true
                 );
 
-        brand.setLetterSpacing(0.08f);
-
         root.addView(
-                brand,
+                title,
                 new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        dp(48)
+                        -1,
+                        dp(50)
                 )
         );
 
         TextView subtitle =
-                text(
-                        "OPENVPN • SCRAMBLE EDITION",
-                        11,
-                        Color.rgb(86, 157, 255),
+                label(
+                        "SECURE VPN CLIENT",
+                        12,
+                        Color.rgb(50, 145, 255),
                         true
                 );
-
-        subtitle.setLetterSpacing(0.12f);
 
         root.addView(
                 subtitle,
                 new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        dp(28)
+                        -1,
+                        dp(30)
                 )
         );
 
-        // STATUS CARD
-        LinearLayout statusCard = card();
-
-        LinearLayout statusRow =
+        LinearLayout statusCard =
                 new LinearLayout(this);
 
-        statusRow.setGravity(
-                Gravity.CENTER_VERTICAL
-        );
-
-        statusRow.setOrientation(
-                LinearLayout.HORIZONTAL
-        );
-
-        connectionDot =
-                text(
-                        "●",
-                        25,
-                        Color.rgb(255, 184, 77),
-                        false
-                );
-
-        statusRow.addView(
-                connectionDot,
-                new LinearLayout.LayoutParams(
-                        dp(38),
-                        dp(42)
-                )
-        );
-
-        LinearLayout statusWords =
-                new LinearLayout(this);
-
-        statusWords.setOrientation(
+        statusCard.setOrientation(
                 LinearLayout.VERTICAL
         );
 
-        TextView statusTitle =
-                text(
-                        "VPN STATUS",
-                        10,
+        statusCard.setPadding(
+                dp(20),
+                dp(18),
+                dp(20),
+                dp(18)
+        );
+
+        statusCard.setBackground(
+                bg(
+                        Color.rgb(15, 24, 40),
+                        22
+                )
+        );
+
+        LinearLayout.LayoutParams cardParams =
+                new LinearLayout.LayoutParams(
+                        -1,
+                        -2
+                );
+
+        cardParams.setMargins(
+                0,
+                dp(12),
+                0,
+                dp(12)
+        );
+
+        root.addView(
+                statusCard,
+                cardParams
+        );
+
+        TextView small =
+                label(
+                        "CONNECTION",
+                        11,
                         Color.rgb(125, 145, 170),
                         true
                 );
 
-        statusWords.addView(statusTitle);
+        statusCard.addView(small);
 
-        statusText =
-                text(
-                        "Ready to connect",
-                        18,
-                        Color.WHITE,
+        status =
+                label(
+                        "●  Ready to connect",
+                        21,
+                        Color.rgb(255, 190, 80),
                         true
                 );
 
-        statusWords.addView(statusText);
-
-        statusRow.addView(
-                statusWords,
+        statusCard.addView(
+                status,
                 new LinearLayout.LayoutParams(
-                        0,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        1
+                        -1,
+                        dp(48)
                 )
         );
 
-        profileCount =
-                text(
+        profiles =
+                label(
                         "0 profiles",
                         12,
                         Color.rgb(145, 165, 190),
                         false
                 );
 
-        statusRow.addView(profileCount);
+        statusCard.addView(profiles);
 
-        statusCard.addView(statusRow);
-
-        root.addView(statusCard);
-
-        // MAIN CONNECT BUTTON
         Button connect =
-                action("CONNECT / PROFILES");
+                button(
+                        "CONNECT"
+                );
 
         connect.setOnClickListener(
-                v -> connectOrProfiles()
+                v -> connect()
         );
 
-        root.addView(connect);
+        root.addView(
+                connect,
+                new LinearLayout.LayoutParams(
+                        -1,
+                        dp(58)
+                )
+        );
 
-        // PROFILES CARD
-        LinearLayout pCard = card();
+        addSpace(12);
 
-        TextView pTitle =
-                text(
+        LinearLayout profileCard =
+                new LinearLayout(this);
+
+        profileCard.setOrientation(
+                LinearLayout.VERTICAL
+        );
+
+        profileCard.setPadding(
+                dp(18),
+                dp(16),
+                dp(18),
+                dp(16)
+        );
+
+        profileCard.setBackground(
+                bg(
+                        Color.rgb(15, 24, 40),
+                        22
+                )
+        );
+
+        root.addView(
+                profileCard,
+                new LinearLayout.LayoutParams(
+                        -1,
+                        -2
+                )
+        );
+
+        profileCard.addView(
+                label(
                         "PROFILES",
                         18,
                         Color.WHITE,
                         true
-                );
-
-        pCard.addView(pTitle);
-
-        TextView pSub =
-                text(
-                        "Manage, connect, edit and import your .ovpn profiles",
-                        12,
-                        Color.rgb(145, 165, 190),
-                        false
-                );
-
-        pCard.addView(pSub);
-
-        Button profiles =
-                action("Open Profiles");
-
-        profiles.setOnClickListener(
-                v -> openProfiles()
-        );
-
-        pCard.addView(profiles);
-
-        Button importButton =
-                action("Import .OVPN");
-
-        importButton.setBackground(
-                rounded(
-                        Color.rgb(22, 35, 55),
-                        16
                 )
         );
 
+        profileCard.addView(
+                label(
+                        "Manage your OpenVPN configurations",
+                        12,
+                        Color.rgb(145, 165, 190),
+                        false
+                )
+        );
+
+        addSpaceTo(
+                profileCard,
+                8
+        );
+
+        Button open =
+                button(
+                        "Open Profiles"
+                );
+
+        open.setOnClickListener(
+                v -> openProfiles()
+        );
+
+        profileCard.addView(open);
+
+        Button importButton =
+                button(
+                        "Import .OVPN"
+                );
+
         importButton.setTextColor(
-                Color.rgb(95, 169, 255)
+                Color.rgb(75, 160, 255)
+        );
+
+        importButton.setBackground(
+                bg(
+                        Color.rgb(22, 35, 55),
+                        18
+                )
         );
 
         importButton.setOnClickListener(
-                v -> importProfile()
+                v -> importConfig()
         );
 
-        pCard.addView(importButton);
+        profileCard.addView(importButton);
 
-        root.addView(pCard);
+        addSpace(12);
 
-        // TOOLS
-        LinearLayout tools = card();
+        LinearLayout tools =
+                new LinearLayout(this);
+
+        tools.setOrientation(
+                LinearLayout.VERTICAL
+        );
+
+        tools.setPadding(
+                dp(18),
+                dp(16),
+                dp(18),
+                dp(16)
+        );
+
+        tools.setBackground(
+                bg(
+                        Color.rgb(15, 24, 40),
+                        22
+                )
+        );
+
+        root.addView(
+                tools,
+                new LinearLayout.LayoutParams(
+                        -1,
+                        -2
+                )
+        );
 
         tools.addView(
-                text(
+                label(
                         "TOOLS",
                         18,
                         Color.WHITE,
@@ -487,12 +475,14 @@ public class OVPN30Activity extends BaseActivity {
         );
 
         Button logs =
-                action("Connection Logs");
+                button(
+                        "Connection Logs"
+                );
 
         logs.setBackground(
-                rounded(
+                bg(
                         Color.rgb(22, 35, 55),
-                        16
+                        18
                 )
         );
 
@@ -507,92 +497,111 @@ public class OVPN30Activity extends BaseActivity {
 
         tools.addView(logs);
 
-        Button settings =
-                action("Settings");
-
-        settings.setBackground(
-                rounded(
-                        Color.rgb(22, 35, 55),
-                        16
-                )
-        );
-
-        settings.setOnClickListener(
-                v -> openSettingsHint()
-        );
-
-        tools.addView(settings);
-
-        root.addView(tools);
-
         TextView footer =
-                text(
-                        "OVPN30  •  OpenVPN XOR engine  •  v0.7.37-xor",
+                label(
+                        "OVPN30  •  XOR SCRAMBLE",
                         10,
-                        Color.rgb(80, 98, 122),
+                        Color.rgb(75, 95, 120),
                         false
                 );
 
-        footer.setGravity(Gravity.CENTER);
-
-        footer.setPadding(
-                0,
-                dp(14),
-                0,
-                0
+        footer.setGravity(
+                Gravity.CENTER
         );
 
-        root.addView(footer);
-
-        scroll.addView(root);
-
-        frame.addView(
-                scroll,
-                new FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
+        root.addView(
+                footer,
+                new LinearLayout.LayoutParams(
+                        -1,
+                        dp(50)
                 )
         );
 
-        setContentView(frame);
+        setContentView(scroll);
 
-        refreshStatus();
+        refresh();
     }
 
-    private void refreshStatus() {
+    private void addSpace(
+            int height
+    ) {
+        View v =
+                new View(this);
 
-        boolean active =
-                VpnStatus.isVPNActive();
-
-        connectionDot.setTextColor(
-                active
-                        ? Color.rgb(53, 211, 123)
-                        : Color.rgb(255, 184, 77)
+        root.addView(
+                v,
+                new LinearLayout.LayoutParams(
+                        1,
+                        dp(height)
+                )
         );
+    }
 
-        statusText.setText(
-                active
-                        ? "Connected"
-                        : "Ready to connect"
+    private void addSpaceTo(
+            LinearLayout parent,
+            int height
+    ) {
+        View v =
+                new View(this);
+
+        parent.addView(
+                v,
+                new LinearLayout.LayoutParams(
+                        1,
+                        dp(height)
+                )
         );
+    }
 
-        int count =
+    private void refresh() {
+
+        if (VpnStatus.isVPNActive()) {
+
+            status.setText(
+                    "●  Connected"
+            );
+
+            status.setTextColor(
+                    Color.rgb(
+                            50,
+                            220,
+                            125
+                    )
+            );
+
+        } else {
+
+            status.setText(
+                    "●  Ready to connect"
+            );
+
+            status.setTextColor(
+                    Color.rgb(
+                            255,
+                            190,
+                            80
+                    )
+            );
+        }
+
+        Collection<VpnProfile> list =
                 ProfileManager
                         .getInstance(this)
-                        .getProfiles()
-                        .size();
+                        .getProfiles();
 
-        profileCount.setText(
-                count +
-                        (
-                                count == 1
-                                        ? " profile"
-                                        : " profiles"
-                        )
+        int count =
+                list == null
+                        ? 0
+                        : list.size();
+
+        profiles.setText(
+                count == 1
+                        ? "1 profile"
+                        : count + " profiles"
         );
     }
 
-    private void connectOrProfiles() {
+    private void connect() {
 
         if (VpnStatus.isVPNActive()) {
 
@@ -606,32 +615,32 @@ public class OVPN30Activity extends BaseActivity {
             return;
         }
 
-        java.util.Collection<VpnProfile> profiles =
+        Collection<VpnProfile> list =
                 ProfileManager
                         .getInstance(this)
                         .getProfiles();
 
-        if (profiles.size() == 1) {
+        if (list.size() == 1) {
 
-            VpnProfile profile =
-                    profiles.iterator().next();
+            VpnProfile p =
+                    list.iterator().next();
 
-            Intent intent =
+            Intent i =
                     new Intent(
                             this,
                             LaunchVPN.class
                     );
 
-            intent.putExtra(
+            i.putExtra(
                     LaunchVPN.EXTRA_KEY,
-                    profile.getUUID().toString()
+                    p.getUUID().toString()
             );
 
-            intent.setAction(
+            i.setAction(
                     Intent.ACTION_MAIN
             );
 
-            startActivity(intent);
+            startActivity(i);
 
         } else {
 
@@ -647,41 +656,44 @@ public class OVPN30Activity extends BaseActivity {
                         android.R.id.content,
                         new VPNProfileList()
                 )
-                .addToBackStack("profiles")
+                .addToBackStack(
+                        "profiles"
+                )
                 .commit();
     }
 
-    private void importProfile() {
+    private void importConfig() {
 
-        Intent intent =
+        Intent i =
                 new Intent(
                         this,
                         FileSelect.class
                 );
 
-        intent.putExtra(
+        i.putExtra(
                 FileSelect.NO_INLINE_SELECTION,
                 true
         );
 
-        intent.putExtra(
+        i.putExtra(
                 FileSelect.WINDOW_TITLE,
                 R.string.import_configuration_file
         );
 
         startActivityForResult(
-                intent,
-                SELECT_PROFILE
+                i,
+                REQUEST_FILE
         );
     }
 
-    private void openSettingsHint() {
+    @Override
+    protected void onResume() {
 
-        Toast.makeText(
-                this,
-                "برای تنظیمات یک پروفایل، ابتدا Profiles را باز کنید و تنظیمات همان پروفایل را انتخاب کنید.",
-                Toast.LENGTH_LONG
-        ).show();
+        super.onResume();
+
+        if (status != null) {
+            refresh();
+        }
     }
 
     @Override
@@ -698,248 +710,143 @@ public class OVPN30Activity extends BaseActivity {
         );
 
         if (
-                resultCode != Activity.RESULT_OK
-                        || data == null
+                requestCode == REQUEST_FILE
+                && resultCode == Activity.RESULT_OK
+                && data != null
         ) {
 
-            refreshStatus();
-
-            return;
-        }
-
-        if (requestCode == SELECT_PROFILE) {
-
-            String fileData =
+            String file =
                     data.getStringExtra(
                             FileSelect.RESULT_DATA
                     );
 
-            if (fileData == null) {
+            if (file != null) {
 
-                refreshStatus();
+                Intent converter =
+                        new Intent(
+                                this,
+                                ConfigConverter.class
+                        );
 
-                return;
+                converter.setAction(
+                        ConfigConverter.IMPORT_PROFILE
+                );
+
+                converter.setData(
+                        Uri.parse(
+                                "file://" + file
+                        )
+                );
+
+                startActivityForResult(
+                        converter,
+                        REQUEST_IMPORT
+                );
             }
 
-            Uri uri =
-                    new Uri.Builder()
-                            .path(fileData)
-                            .scheme("file")
-                            .build();
-
-            Intent startImport =
-                    new Intent(
-                            this,
-                            ConfigConverter.class
-                    );
-
-            startImport.setAction(
-                    ConfigConverter.IMPORT_PROFILE
-            );
-
-            startImport.setData(uri);
-
-            startActivityForResult(
-                    startImport,
-                    IMPORT_PROFILE
-            );
-
         } else if (
-                requestCode == IMPORT_PROFILE
+                requestCode == REQUEST_IMPORT
+                && resultCode == Activity.RESULT_OK
         ) {
 
             Toast.makeText(
                     this,
-                    "Profile imported successfully",
+                    "Profile imported",
                     Toast.LENGTH_SHORT
             ).show();
 
-            refreshStatus();
+            refresh();
         }
     }
 }
 JAVA
 
-          # ======================================================
-          # PATCH MANIFESTS
-          # ======================================================
-
-          python3 <<'PY'
-          from pathlib import Path
-          import xml.etree.ElementTree as ET
-
-          android = "http://schemas.android.com/apk/res/android"
-
-          ET.register_namespace("android", android)
-
-          # Main manifest
-          manifest = Path(
-              "upstream/main/src/main/AndroidManifest.xml"
-          )
-
-          tree = ET.parse(manifest)
-          root = tree.getroot()
-
-          app = root.find("application")
-
-          if app is None:
-              raise SystemExit(
-                  "Main manifest has no application element"
-              )
-
-          app.set(
-              f"{{{android}}}label",
-              "OVPN30"
-          )
-
-          app.set(
-              f"{{{android}}}icon",
-              "@drawable/ovpn30_icon"
-          )
-
-          app.set(
-              f"{{{android}}}roundIcon",
-              "@drawable/ovpn30_icon"
-          )
-
-          tree.write(
-              manifest,
-              encoding="utf-8",
-              xml_declaration=True
-          )
-
-          # UI manifest
-          ui_manifest = Path(
-              "upstream/main/src/ui/AndroidManifest.xml"
-          )
-
-          ui_tree = ET.parse(ui_manifest)
-          ui_root = ui_tree.getroot()
-
-          launcher_changed = False
-
-          for activity in ui_root.findall(
-                  ".//activity"
-          ):
-
-              name = activity.get(
-                  f"{{{android}}}name",
-                  ""
-              )
-
-              intent = activity.find(
-                  "intent-filter"
-              )
-
-              if (
-                  name == ".activities.MainActivity"
-                  and intent is not None
-              ):
-
-                  actions = [
-                      x.get(
-                          f"{{{android}}}name"
-                      )
-                      for x in intent.findall("action")
-                  ]
-
-                  cats = [
-                      x.get(
-                          f"{{{android}}}name"
-                      )
-                      for x in intent.findall("category")
-                  ]
-
-                  if (
-                      "android.intent.action.MAIN"
-                      in actions
-                      and
-                      "android.intent.category.LAUNCHER"
-                      in cats
-                  ):
-
-                      activity.set(
-                          f"{{{android}}}name",
-                          ".activities.OVPN30Activity"
-                      )
-
-                      launcher_changed = True
-
-          if not launcher_changed:
-
-              raise SystemExit(
-                  "Could not find real UI launcher"
-              )
-
-          ui_tree.write(
-              ui_manifest,
-              encoding="utf-8",
-              xml_declaration=True
-          )
-
-          print(
-              "OVPN30 launcher installed successfully"
-          )
-          PY
-
-          # ======================================================
-          # CUSTOM ICON
-          # ======================================================
+      - name: Patch OVPN30 icon
+        shell: bash
+        run: |
 
           cat > upstream/main/src/main/res/drawable/ovpn30_icon.xml <<'XML'
-          <?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
+<vector
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
 
-          <vector
-              xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="108dp"
-              android:height="108dp"
-              android:viewportWidth="512"
-              android:viewportHeight="512">
+    <path
+        android:fillColor="#05080F"
+        android:pathData="M112,0L400,0Q512,0 512,112L512,400Q512,512 400,512L112,512Q0,512 0,400L0,112Q0,0 112,0Z" />
 
-              <path
-                  android:fillColor="#05080F"
-                  android:pathData="M112,0L400,0Q512,0 512,112L512,400Q512,512 400,512L112,512Q0,512 0,400L0,112Q0,0 112,0Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M256,65A191,191 0,1 0,256 447A191,191 0,1 0,256 65M256,105A151,151 0,1 1,256 407A151,151 0,1 1,256 105Z" />
 
-              <path
-                  android:fillColor="#FFFFFF"
-                  android:fillType="evenOdd"
-                  android:pathData="M256,70A186,186 0,1 0,256 442A186,186 0,1 0,256 70M256,106A150,150 0,1 1,256 406A150,150 0,1 1,256 106Z" />
+    <path
+        android:fillColor="#1787FF"
+        android:pathData="M246,135L266,135L266,377L246,377Z" />
 
-              <path
-                  android:fillColor="#1787FF"
-                  android:pathData="M247,137L265,137L265,375L247,375Z" />
+    <path
+        android:fillColor="#1787FF"
+        android:pathData="M135,246L377,246L377,266L135,266Z" />
 
-              <path
-                  android:fillColor="#1787FF"
-                  android:pathData="M137,247L375,247L375,265L137,265Z" />
+</vector>
+XML
 
-          </vector>
-          XML
+      - name: Patch application name
+        shell: bash
+        run: |
 
-          echo ""
-          echo "=========================================="
-          echo "VERIFY OVPN30 LAUNCHER"
-          echo "=========================================="
+          python3 <<'PY'
+from pathlib import Path
+import xml.etree.ElementTree as ET
 
-          grep -n -A12 -B3 \
-            "OVPN30Activity" \
-            upstream/main/src/ui/AndroidManifest.xml
+ANDROID = "http://schemas.android.com/apk/res/android"
 
-          echo ""
-          echo "=========================================="
-          echo "VERIFY SCRAMBLE SOURCE"
-          echo "=========================================="
+ET.register_namespace(
+    "android",
+    ANDROID
+)
 
-          grep -R "scramble" \
-            upstream/main/src/main/cpp/openvpn \
-            2>/dev/null \
-            | head -n 30 || true
+files = [
+    Path("upstream/main/src/main/AndroidManifest.xml"),
+    Path("upstream/main/src/ui/AndroidManifest.xml")
+]
 
-      # ==========================================================
-      # JAVA 11 FOR OLD GRADLE
-      # ==========================================================
+for file in files:
 
-      - name: Setup Java 11 for Gradle
+    tree = ET.parse(file)
+    root = tree.getroot()
+
+    app = root.find("application")
+
+    if app is not None:
+
+        app.set(
+            f"{{{ANDROID}}}label",
+            "OVPN30"
+        )
+
+        app.set(
+            f"{{{ANDROID}}}icon",
+            "@drawable/ovpn30_icon"
+        )
+
+        app.set(
+            f"{{{ANDROID}}}roundIcon",
+            "@drawable/ovpn30_icon"
+        )
+
+    tree.write(
+        file,
+        encoding="utf-8",
+        xml_declaration=True
+    )
+
+print("OVPN30 manifest patched")
+PY
+
+      - name: Setup Java 11
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -947,231 +854,72 @@ JAVA
 
       - name: Prepare Gradle
         working-directory: upstream
-        shell: bash
         run: |
-
-          set -e
 
           chmod +x gradlew
 
           mkdir -p ~/.gradle
 
           cat > ~/.gradle/gradle.properties <<EOF
-          android.useAndroidX=true
-          android.enableJetifier=true
-          android.enableUnitTestBinaryResources=false
-          org.gradle.jvmargs=-Xmx4096M
-          org.gradle.daemon=false
-          keystoreFile=$RUNNER_TEMP/ovpn30.keystore
-          keystorePassword=ovpn30password
-          keystoreAliasPassword=ovpn30password
-          keystoreAlias=ovpn30
-          EOF
+android.useAndroidX=true
+android.enableJetifier=true
+org.gradle.jvmargs=-Xmx4096M
+org.gradle.daemon=false
+EOF
 
-          java -version
+      - name: Verify scramble engine
+        working-directory: upstream
+        run: |
 
-      # ==========================================================
-      # BUILD
-      # ==========================================================
+          echo "Checking XOR/Scramble source..."
+
+          grep -Rni "scramble" \
+            main/src/main/cpp \
+            2>/dev/null \
+            | head -30 || true
 
       - name: Build OVPN30
         working-directory: upstream
-        shell: bash
         run: |
 
-          set -e
-
-          echo "======================================"
-          echo "BUILDING OVPN30"
-          echo "======================================"
+          chmod +x gradlew
 
           ./gradlew \
             :main:assembleUiRelease \
             --no-daemon \
             --stacktrace
 
-      # ==========================================================
-      # LOCATE APK
-      # ==========================================================
-
-      - name: Locate APK
-        shell: bash
+      - name: Find APK
         run: |
 
-          set -e
+          mkdir -p release
 
-          echo "===== APK FILES ====="
-
-          find \
-            upstream/main/build/outputs/apk \
+          find upstream/main/build/outputs/apk \
             -type f \
             -name "*.apk" \
             -print
 
-          APK=$(
-            find \
-              upstream/main/build/outputs/apk \
-              -type f \
-              -name "*.apk" |
-            grep -E \
-              "ui.*release|release.*universal|universal" |
-            head -n1 || true
-          )
+          APK=$(find \
+            upstream/main/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            | head -1)
 
           if [ -z "$APK" ]; then
-
-            APK=$(
-              find \
-                upstream/main/build/outputs/apk \
-                -type f \
-                -name "*.apk" |
-              head -n1 || true
-            )
-
-          fi
-
-          if [ -z "$APK" ]; then
-
-            echo "ERROR: APK not found"
-
-            exit 1
-
-          fi
-
-          echo "Selected APK:"
-          echo "$APK"
-
-          mkdir -p unsigned
-
-          cp \
-            "$APK" \
-            unsigned/OVPN30-unsigned.apk
-
-          ls -lh \
-            unsigned/OVPN30-unsigned.apk
-
-      # ==========================================================
-      # SIGNING TOOLS
-      # ==========================================================
-
-      - name: Find Android signing tools
-        shell: bash
-        run: |
-
-          set -e
-
-          ZIPALIGN=$(
-            find "$ANDROID_HOME/build-tools" \
-              -type f \
-              -name zipalign |
-            sort -V |
-            tail -n1
-          )
-
-          APKSIGNER=$(
-            find "$ANDROID_HOME/build-tools" \
-              -type f \
-              -name apksigner |
-            sort -V |
-            tail -n1
-          )
-
-          if [ -z "$ZIPALIGN" ]; then
-            echo "ERROR: zipalign not found"
+            echo "APK NOT FOUND"
             exit 1
           fi
 
-          if [ -z "$APKSIGNER" ]; then
-            echo "ERROR: apksigner not found"
-            exit 1
-          fi
+          cp "$APK" \
+            release/OVPN30-Scramble.apk
 
-          echo "ZIPALIGN=$ZIPALIGN" >> "$GITHUB_ENV"
-          echo "APKSIGNER=$APKSIGNER" >> "$GITHUB_ENV"
-
-      # ==========================================================
-      # ZIPALIGN
-      # ==========================================================
-
-      - name: Zipalign APK
-        shell: bash
-        run: |
-
-          set -e
-
-          mkdir -p release
-
-          "$ZIPALIGN" \
-            -f \
-            -v \
-            4 \
-            unsigned/OVPN30-unsigned.apk \
-            release/OVPN30-aligned.apk
-
-      # ==========================================================
-      # SIGN
-      # ==========================================================
-
-      - name: Sign APK
-        shell: bash
-        run: |
-
-          set -e
-
-          "$APKSIGNER" sign \
-            --ks "$RUNNER_TEMP/ovpn30.keystore" \
-            --ks-key-alias ovpn30 \
-            --ks-pass pass:ovpn30password \
-            --key-pass pass:ovpn30password \
-            --out release/OVPN30-Scramble.apk \
-            release/OVPN30-aligned.apk
-
-          echo "Signed APK:"
           ls -lh \
             release/OVPN30-Scramble.apk
 
-      # ==========================================================
-      # VERIFY
-      # ==========================================================
-
-      - name: Verify APK
-        shell: bash
-        run: |
-
-          set -e
-
-          APK="release/OVPN30-Scramble.apk"
-
-          "$APKSIGNER" verify \
-            --verbose \
-            "$APK"
-
-          unzip -t \
-            "$APK" >/dev/null
-
-          echo ""
-          echo "===== FINAL APK ====="
-
-          ls -lh "$APK"
-
-          echo ""
-          echo "===== SHA256 ====="
-
-          sha256sum "$APK"
-
-      # ==========================================================
-      # ARTIFACT
-      # ==========================================================
-
-      - name: Upload OVPN30 APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
-
         with:
-
-          name: OVPN30-Scramble-Signed
-
+          name: OVPN30-Scramble
           path: release/OVPN30-Scramble.apk
-
           if-no-files-found: error
-
           retention-days: 30
