@@ -16,17 +16,17 @@ jobs:
 
     steps:
 
-      # ------------------------------------------
-      # CHECKOUT PROJECT
-      # ------------------------------------------
+      # ==========================================
+      # CHECKOUT M30
+      # ==========================================
 
       - name: Checkout M30
         uses: actions/checkout@v4
 
-      # ------------------------------------------
+      # ==========================================
       # CHECKOUT OPENVPN XOR
-      # IMPORTANT: DO NOT CHANGE THE TAG
-      # ------------------------------------------
+      # IMPORTANT: KEEP THIS TAG
+      # ==========================================
 
       - name: Checkout OpenVPN XOR
         uses: actions/checkout@v4
@@ -36,9 +36,9 @@ jobs:
           submodules: recursive
           path: upstream
 
-      # ------------------------------------------
+      # ==========================================
       # JAVA 17
-      # ------------------------------------------
+      # ==========================================
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -46,24 +46,52 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # ------------------------------------------
+      # ==========================================
       # ANDROID SDK
-      # ------------------------------------------
+      # Do NOT use setup-android action here
+      # ==========================================
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android licenses
-        shell: bash
-        run: |
-          set +e
-          yes | sdkmanager --licenses
-          exit 0
-
-      - name: Install Android SDK
         shell: bash
         run: |
           set -e
+
+          if [ -z "$ANDROID_HOME" ]; then
+            export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          fi
+
+          if [ -z "$ANDROID_HOME" ]; then
+            export ANDROID_HOME="/usr/local/lib/android/sdk"
+          fi
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+          echo "Checking sdkmanager..."
+
+          if ! command -v sdkmanager >/dev/null 2>&1; then
+            SDKMANAGER=$(find "$ANDROID_HOME" \
+              -type f \
+              -name sdkmanager \
+              2>/dev/null \
+              | head -n 1 || true)
+
+            if [ -z "$SDKMANAGER" ]; then
+              echo "ERROR: sdkmanager not found"
+              exit 1
+            fi
+
+            export PATH="$(dirname "$SDKMANAGER"):$PATH"
+          fi
+
+          echo "sdkmanager:"
+          command -v sdkmanager
+
+          echo "Accepting Android licenses..."
+
+          yes | sdkmanager --licenses \
+            >/dev/null 2>&1 || true
+
+          echo "Installing Android SDK packages..."
 
           sdkmanager \
             "platform-tools" \
@@ -71,24 +99,49 @@ jobs:
             "build-tools;32.0.0" \
             "ndk;24.0.8215888"
 
-      # ------------------------------------------
-      # INSTALL CUSTOM OVPN30 DASHBOARD
-      # ------------------------------------------
+          echo "Android SDK ready."
+
+      # ==========================================
+      # CREATE SIGNING KEY
+      # ==========================================
+
+      - name: Create signing keystore
+        shell: bash
+        run: |
+          set -e
+
+          keytool -genkeypair \
+            -v \
+            -keystore "$RUNNER_TEMP/ovpn30.keystore" \
+            -alias ovpn30 \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass ovpn30password \
+            -keypass ovpn30password \
+            -dname "CN=OVPN30,O=OVPN30,C=US"
+
+          echo "Keystore created."
+
+      # ==========================================
+      # INSTALL OVPN30 DASHBOARD
+      # ==========================================
 
       - name: Install OVPN30 dashboard
         shell: bash
         run: |
           set -e
 
+          echo "Checking custom files..."
+
+          test -f OVPN30Activity.java
+          test -f ovpn30_icon.xml
+
           mkdir -p \
             upstream/main/src/ui/java/de/blinkt/openvpn/activities
 
           mkdir -p \
             upstream/main/src/main/res/drawable
-
-          test -f OVPN30Activity.java
-
-          test -f ovpn30_icon.xml
 
           cp \
             OVPN30Activity.java \
@@ -100,9 +153,9 @@ jobs:
 
           echo "OVPN30 dashboard installed."
 
-      # ------------------------------------------
+      # ==========================================
       # PATCH UI LAUNCHER
-      # ------------------------------------------
+      # ==========================================
 
       - name: Patch OVPN30 launcher
         shell: bash
@@ -144,7 +197,7 @@ jobs:
 
           if not found:
               raise SystemExit(
-                  "ERROR: MainActivity launcher was not found."
+                  "ERROR: MainActivity launcher not found"
               )
 
           tree.write(
@@ -158,9 +211,9 @@ jobs:
           )
           PY
 
-      # ------------------------------------------
-      # PATCH APP NAME AND ICON
-      # ------------------------------------------
+      # ==========================================
+      # PATCH APPLICATION NAME + ICON
+      # ==========================================
 
       - name: Patch application
         shell: bash
@@ -214,33 +267,39 @@ jobs:
                   xml_declaration=True
               )
 
-          print("Application name and icon patched.")
+          print("Application patched.")
           PY
 
-      # ------------------------------------------
-      # VERIFY CUSTOM FILES
-      # ------------------------------------------
+      # ==========================================
+      # VERIFY FILES
+      # ==========================================
 
-      - name: Verify OVPN30 files
+      - name: Verify OVPN30
         shell: bash
         run: |
           set -e
 
-          echo "===== DASHBOARD ====="
+          echo "================================"
+          echo "OVPN30 DASHBOARD"
+          echo "================================"
 
           test -f \
             upstream/main/src/ui/java/de/blinkt/openvpn/activities/OVPN30Activity.java
 
           echo "Dashboard OK"
 
-          echo "===== ICON ====="
+          echo "================================"
+          echo "OVPN30 ICON"
+          echo "================================"
 
           test -f \
             upstream/main/src/main/res/drawable/ovpn30_icon.xml
 
           echo "Icon OK"
 
-          echo "===== LAUNCHER ====="
+          echo "================================"
+          echo "OVPN30 LAUNCHER"
+          echo "================================"
 
           grep -n \
             "OVPN30Activity" \
@@ -248,7 +307,9 @@ jobs:
 
           echo "Launcher OK"
 
-          echo "===== SCRAMBLE ====="
+          echo "================================"
+          echo "SCRAMBLE CHECK"
+          echo "================================"
 
           grep -Rni \
             "scramble" \
@@ -256,10 +317,9 @@ jobs:
             2>/dev/null \
             | head -30 || true
 
-      # ------------------------------------------
+      # ==========================================
       # JAVA 11
-      # OLD GRADLE COMPATIBILITY
-      # ------------------------------------------
+      # ==========================================
 
       - name: Setup Java 11
         uses: actions/setup-java@v4
@@ -267,9 +327,9 @@ jobs:
           distribution: temurin
           java-version: '11'
 
-      # ------------------------------------------
-      # GRADLE
-      # ------------------------------------------
+      # ==========================================
+      # GRADLE SETTINGS
+      # ==========================================
 
       - name: Prepare Gradle
         working-directory: upstream
@@ -281,21 +341,25 @@ jobs:
 
           mkdir -p ~/.gradle
 
-          cat > ~/.gradle/gradle.properties <<'EOF'
+          cat > ~/.gradle/gradle.properties <<EOF
           android.useAndroidX=true
           android.enableJetifier=true
           android.enableUnitTestBinaryResources=false
           org.gradle.jvmargs=-Xmx4096M
           org.gradle.daemon=false
+          keystoreFile=$RUNNER_TEMP/ovpn30.keystore
+          keystorePassword=ovpn30password
+          keystoreAliasPassword=ovpn30password
+          keystoreAlias=ovpn30
           EOF
 
-          echo "Gradle prepared."
+          echo "Gradle configured."
 
           java -version
 
-      # ------------------------------------------
+      # ==========================================
       # BUILD
-      # ------------------------------------------
+      # ==========================================
 
       - name: Build OVPN30
         working-directory: upstream
@@ -314,9 +378,9 @@ jobs:
             --no-daemon \
             --stacktrace
 
-      # ------------------------------------------
+      # ==========================================
       # FIND APK
-      # ------------------------------------------
+      # ==========================================
 
       - name: Locate APK
         shell: bash
@@ -340,7 +404,7 @@ jobs:
               -name "*.apk" \
             | grep -E \
               "ui.*release|release.*universal|universal" \
-            | head -n 1
+            | head -n 1 || true
           )
 
           if [ -z "$APK" ]; then
@@ -350,7 +414,7 @@ jobs:
                 upstream/main/build/outputs/apk \
                 -type f \
                 -name "*.apk" \
-              | head -n 1
+              | head -n 1 || true
             )
 
           fi
@@ -366,13 +430,16 @@ jobs:
             "$APK" \
             release/OVPN30-Scramble.apk
 
-          echo ""
-          echo "APK:"
-          ls -lh release/OVPN30-Scramble.apk
+          echo "======================================"
+          echo "APK FOUND"
+          echo "======================================"
 
-      # ------------------------------------------
+          ls -lh \
+            release/OVPN30-Scramble.apk
+
+      # ==========================================
       # UPLOAD APK
-      # ------------------------------------------
+      # ==========================================
 
       - name: Upload OVPN30 APK
         uses: actions/upload-artifact@v4
