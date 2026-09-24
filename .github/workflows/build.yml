@@ -15,46 +15,31 @@ jobs:
 
     steps:
 
-      # --------------------------------------------------
-      # 1. Checkout OVPN30 wrapper
-      # --------------------------------------------------
-      - name: Checkout OVPN30 wrapper
+      # 1. Checkout OVPN30
+      - name: Checkout OVPN30
         uses: actions/checkout@v4
 
-
-      # --------------------------------------------------
-      # 2. Java 17
-      # Android SDK command-line tools require JDK 17+
-      # --------------------------------------------------
-      - name: Setup Java 17 for Android SDK
+      # 2. Java 17 for modern Android SDK tools
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-
-      # --------------------------------------------------
       # 3. Android SDK
-      # --------------------------------------------------
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
-
-      # --------------------------------------------------
-      # 4. Install required Android components
-      # --------------------------------------------------
+      # 4. Install Android components
       - name: Install Android SDK components
         shell: bash
         run: |
           set -e
 
-          echo "Java version:"
+          echo "Java:"
           java -version
 
-          echo "Accepting Android SDK licenses..."
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-
-          echo "Installing Android SDK components..."
 
           sdkmanager \
             "platform-tools" \
@@ -62,21 +47,7 @@ jobs:
             "build-tools;32.0.0" \
             "ndk;24.0.8215888"
 
-
-      # --------------------------------------------------
-      # 5. Switch to Java 11
-      # Old OpenVPN/Gradle toolchain uses Java 11
-      # --------------------------------------------------
-      - name: Switch to Java 11 for Gradle
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '11'
-
-
-      # --------------------------------------------------
-      # 6. Checkout real OpenVPN XOR source
-      # --------------------------------------------------
+      # 5. Checkout real OpenVPN XOR project
       - name: Checkout OpenVPN XOR engine
         uses: actions/checkout@v4
         with:
@@ -85,10 +56,7 @@ jobs:
           submodules: recursive
           path: upstream
 
-
-      # --------------------------------------------------
-      # 7. Create temporary signing keystore
-      # --------------------------------------------------
+      # 6. Create signing key
       - name: Create signing keystore
         shell: bash
         run: |
@@ -102,40 +70,113 @@ jobs:
             -validity 10000 \
             -storepass ovpn30password \
             -keypass ovpn30password \
-            -dname "CN=OVPN30, O=OVPN30, C=US"
+            -dname "CN=OVPN30,O=OVPN30,C=US"
 
-
-      # --------------------------------------------------
-      # 8. Patch ONLY the real OpenVPN main application
-      # --------------------------------------------------
-      - name: Patch ONLY the real main app
+      # 7. Patch the REAL main application directly
+      - name: Patch OVPN30 main application
         shell: bash
         run: |
           set -e
 
-          python3 scripts/patch_upstream.py
+          MANIFEST="upstream/main/src/main/AndroidManifest.xml"
+          RES="upstream/main/src/main/res"
+          DRAWABLE="$RES/drawable"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "ERROR: Main AndroidManifest.xml not found"
+            exit 1
+          fi
+
+          echo "Patching:"
+          echo "$MANIFEST"
+
+          mkdir -p "$DRAWABLE"
+
+          python3 <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          manifest = Path("upstream/main/src/main/AndroidManifest.xml")
+          android = "http://schemas.android.com/apk/res/android"
+
+          ET.register_namespace("android", android)
+
+          tree = ET.parse(manifest)
+          root = tree.getroot()
+
+          app = root.find("application")
+
+          if app is None:
+              raise SystemExit("No application element found")
+
+          app.set(f"{{{android}}}label", "OVPN30")
+          app.set(f"{{{android}}}icon", "@drawable/ovpn30_icon")
+          app.set(f"{{{android}}}roundIcon", "@drawable/ovpn30_icon")
+
+          tree.write(
+              manifest,
+              encoding="utf-8",
+              xml_declaration=True
+          )
+
+          icon = Path(
+              "upstream/main/src/main/res/drawable/ovpn30_icon.xml"
+          )
+
+          icon.write_text(
+          '''<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="512"
+              android:viewportHeight="512">
+
+              <path
+                  android:fillColor="#000000"
+                  android:pathData="M112,0L400,0Q512,0 512,112L512,400Q512,512 400,512L112,512Q0,512 0,400L0,112Q0,0 112,0Z" />
+
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:fillType="evenOdd"
+                  android:pathData="M256,69A187,187 0,1 0,256 443A187,187 0,1 0,256 69M256,103A153,153 0,1 1,256 409A153,153 0,1 1,256 103Z" />
+
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M246,142L266,142L266,370L246,370Z" />
+
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M142,246L370,246L370,266L142,266Z" />
+
+          </vector>
+          ''',
+          encoding="utf-8"
+          )
+
+          print("Manifest patched successfully")
+          print("Icon created successfully")
+          PY
 
           echo ""
-          echo "=========================================="
-          echo "MAIN MANIFEST"
-          echo "=========================================="
-
-          grep -n "android:icon\|android:label" \
-            upstream/main/src/main/AndroidManifest.xml || true
+          echo "===== MAIN MANIFEST ====="
+          grep -n "android:label\|android:icon" \
+            "$MANIFEST" || true
 
           echo ""
-          echo "=========================================="
-          echo "REAL UI LAUNCHER"
-          echo "=========================================="
+          echo "===== REAL UI LAUNCHER ====="
 
-          grep -n -A8 -B3 \
+          grep -n -A10 -B3 \
             "android.intent.category.LAUNCHER" \
             upstream/main/src/ui/AndroidManifest.xml
 
+      # 8. Switch to Java 11 for old Gradle
+      - name: Setup Java 11 for Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
 
-      # --------------------------------------------------
       # 9. Prepare Gradle
-      # --------------------------------------------------
       - name: Prepare Gradle
         working-directory: upstream
         shell: bash
@@ -152,99 +193,79 @@ jobs:
           android.enableUnitTestBinaryResources=false
           org.gradle.jvmargs=-Xmx4096M
           org.gradle.daemon=false
-
           keystoreFile=$RUNNER_TEMP/ovpn30.keystore
           keystorePassword=ovpn30password
           keystoreAliasPassword=ovpn30password
           keystoreAlias=ovpn30
           EOF
 
-          echo ""
-          echo "=========================================="
-          echo "GRADLE JAVA VERSION"
-          echo "=========================================="
-
+          echo "Gradle Java:"
           java -version
 
-
-      # --------------------------------------------------
-      # 10. Show available UI build tasks
-      # --------------------------------------------------
-      - name: Show main UI tasks
+      # 10. Check UI build task
+      - name: Check UI build task
         working-directory: upstream
         shell: bash
         run: |
           set -e
 
-          ./gradlew :main:tasks --all --stacktrace > main-tasks.txt
+          ./gradlew :main:tasks --all \
+            --stacktrace > main-tasks.txt
 
-          echo "Available UI release tasks:"
+          echo "===== UI TASKS ====="
+
           grep -E \
             "assemble.*(Ui|ui).*Release|assembleUiRelease" \
             main-tasks.txt || true
 
-
-      # --------------------------------------------------
       # 11. BUILD REAL OPENVPN UI
-      # IMPORTANT:
-      # Do NOT use generic assembleRelease
-      # --------------------------------------------------
       - name: Build REAL OpenVPN UI APK
         working-directory: upstream
         shell: bash
         run: |
           set -e
 
-          echo ""
-          echo "=========================================="
-          echo "BUILDING REAL OPENVPN UI"
-          echo "=========================================="
-
-          echo "Task: :main:assembleUiRelease"
+          echo "======================================"
+          echo "BUILDING OVPN30"
+          echo "======================================"
 
           ./gradlew \
             :main:assembleUiRelease \
             --no-daemon \
             --stacktrace
 
-
-      # --------------------------------------------------
-      # 12. Locate the correct APK
-      # --------------------------------------------------
-      - name: Locate main APK
+      # 12. Locate APK
+      - name: Locate APK
         shell: bash
         run: |
           set -e
 
-          echo ""
-          echo "=========================================="
-          echo "ALL MAIN APK FILES"
-          echo "=========================================="
+          echo "===== APK FILES ====="
 
           find upstream/main/build/outputs/apk \
             -type f \
-            -name '*.apk' \
+            -name "*.apk" \
             -print
 
           APK=$(find upstream/main/build/outputs/apk \
             -type f \
-            -name '*.apk' \
-            | grep -E 'ui.*release|release.*universal|universal' \
+            -name "*.apk" \
+            | grep -E \
+              "ui.*release|release.*universal|universal" \
             | head -n1 || true)
 
           if [ -z "$APK" ]; then
             APK=$(find upstream/main/build/outputs/apk \
               -type f \
-              -name '*.apk' \
+              -name "*.apk" \
               | head -n1 || true)
           fi
 
           if [ -z "$APK" ]; then
-            echo "ERROR: APK was not found."
+            echo "ERROR: APK not found"
             exit 1
           fi
 
-          echo ""
           echo "Selected APK:"
           echo "$APK"
 
@@ -255,11 +276,8 @@ jobs:
 
           ls -lh unsigned/OVPN30-unsigned.apk
 
-
-      # --------------------------------------------------
-      # 13. Find zipalign and apksigner
-      # --------------------------------------------------
-      - name: Find zipalign and apksigner
+      # 13. Find signing tools
+      - name: Find Android signing tools
         shell: bash
         run: |
           set -e
@@ -277,25 +295,19 @@ jobs:
             | tail -n1)
 
           if [ -z "$ZIPALIGN" ]; then
-            echo "ERROR: zipalign not found."
+            echo "ERROR: zipalign not found"
             exit 1
           fi
 
           if [ -z "$APKSIGNER" ]; then
-            echo "ERROR: apksigner not found."
+            echo "ERROR: apksigner not found"
             exit 1
           fi
 
           echo "ZIPALIGN=$ZIPALIGN" >> "$GITHUB_ENV"
           echo "APKSIGNER=$APKSIGNER" >> "$GITHUB_ENV"
 
-          echo "zipalign: $ZIPALIGN"
-          echo "apksigner: $APKSIGNER"
-
-
-      # --------------------------------------------------
-      # 14. Zipalign APK
-      # --------------------------------------------------
+      # 14. Zipalign
       - name: Zipalign APK
         shell: bash
         run: |
@@ -310,14 +322,7 @@ jobs:
             unsigned/OVPN30-unsigned.apk \
             release/OVPN30-aligned.apk
 
-          echo ""
-          echo "Aligned APK:"
-          ls -lh release/OVPN30-aligned.apk
-
-
-      # --------------------------------------------------
-      # 15. Sign APK
-      # --------------------------------------------------
+      # 15. Sign
       - name: Sign APK
         shell: bash
         run: |
@@ -331,25 +336,16 @@ jobs:
             --out release/OVPN30-Scramble.apk \
             release/OVPN30-aligned.apk
 
-          echo ""
           echo "Signed APK:"
           ls -lh release/OVPN30-Scramble.apk
 
-
-      # --------------------------------------------------
-      # 16. Verify final APK
-      # --------------------------------------------------
+      # 16. Verify
       - name: Verify APK
         shell: bash
         run: |
           set -e
 
-          APK=release/OVPN30-Scramble.apk
-
-          echo ""
-          echo "=========================================="
-          echo "VERIFY APK"
-          echo "=========================================="
+          APK="release/OVPN30-Scramble.apk"
 
           "$APKSIGNER" verify \
             --verbose \
@@ -358,22 +354,16 @@ jobs:
           unzip -t "$APK" >/dev/null
 
           echo ""
-          echo "FINAL APK:"
+          echo "===== FINAL APK ====="
+
           ls -lh "$APK"
 
           echo ""
-          echo "SHA256:"
+          echo "===== SHA256 ====="
+
           sha256sum "$APK"
 
-          echo ""
-          echo "SIGNATURE:"
-          unzip -l "$APK" \
-            | grep -E 'META-INF/.*(RSA|SF)' || true
-
-
-      # --------------------------------------------------
-      # 17. Upload APK to GitHub Actions
-      # --------------------------------------------------
+      # 17. Upload APK
       - name: Upload OVPN30 APK
         uses: actions/upload-artifact@v4
         with:
