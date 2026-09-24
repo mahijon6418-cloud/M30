@@ -32,18 +32,15 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
+            - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-
-      - name: Install SDK
-        run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platform-tools" "platforms;android-32" "build-tools;32.0.0" "ndk;24.0.8215888"
-
-      - name: Install OVPN30 UI
-        run: |
-          set -e
-
+        with:
+          packages: |
+            platform-tools
+            platforms;android-32
+            build-tools;32.0.0
+            ndk;24.0.8215888
+          accept-android-sdk-licenses: true
           mkdir -p upstream/main/src/ui/java/de/blinkt/openvpn/activities
           mkdir -p upstream/main/src/main/res/drawable
 
