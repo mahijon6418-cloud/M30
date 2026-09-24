@@ -1,4 +1,4 @@
-name: Build OVPN30
+name: Build OVPN30 APK
 
 on:
   push:
@@ -16,17 +16,17 @@ jobs:
 
     steps:
 
-      # ==================================================
+      # ==========================================
       # 1. CHECKOUT M30
-      # ==================================================
+      # ==========================================
 
       - name: Checkout M30
         uses: actions/checkout@v4
 
 
-      # ==================================================
+      # ==========================================
       # 2. CHECKOUT OPENVPN XOR
-      # ==================================================
+      # ==========================================
 
       - name: Checkout OpenVPN XOR
         uses: actions/checkout@v4
@@ -37,20 +37,21 @@ jobs:
           path: upstream
 
 
-      # ==================================================
-      # 3. JAVA 11
-      # ==================================================
+      # ==========================================
+      # 3. JAVA 17
+      # Android SDK / sdkmanager needs Java 17
+      # ==========================================
 
-      - name: Setup Java 11
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '11'
+          java-version: '17'
 
 
-      # ==================================================
+      # ==========================================
       # 4. ANDROID SDK
-      # ==================================================
+      # ==========================================
 
       - name: Setup Android SDK
         shell: bash
@@ -65,9 +66,14 @@ jobs:
             export ANDROID_HOME="/usr/local/lib/android/sdk"
           fi
 
+          echo "=========================================="
+          echo "ANDROID SDK SETUP"
+          echo "=========================================="
+
           echo "ANDROID_HOME=$ANDROID_HOME"
 
           if ! command -v sdkmanager >/dev/null 2>&1; then
+
             SDKMANAGER=$(find "$ANDROID_HOME" \
               -type f \
               -name sdkmanager \
@@ -82,15 +88,21 @@ jobs:
             export PATH="$(dirname "$SDKMANAGER"):$PATH"
           fi
 
-          echo "Using:"
+          echo ""
+          echo "Java version:"
+          java -version
+
+          echo ""
+          echo "sdkmanager:"
           command -v sdkmanager
 
+          echo ""
           echo "Accepting Android licenses..."
 
-          yes | sdkmanager --licenses \
-            >/dev/null 2>&1 || true
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
 
-          echo "Installing required Android SDK..."
+          echo ""
+          echo "Installing Android SDK packages..."
 
           sdkmanager \
             "platform-tools" \
@@ -98,44 +110,69 @@ jobs:
             "build-tools;32.0.0" \
             "ndk;24.0.8215888"
 
-          echo "Android SDK ready."
+          echo ""
+          echo "=========================================="
+          echo "ANDROID SDK READY"
+          echo "=========================================="
 
 
-      # ==================================================
-      # 5. APPLY TUNNELBLICK XOR / SCRAMBLE PATCHES
-      # ==================================================
-      #
-      # THIS IS THE IMPORTANT FIX.
-      #
-      # v0.7.37-xor contains the patch files, but the
-      # OpenVPN submodule itself does not contain scramble
-      # support until these patches are applied.
-      #
-      # ==================================================
+      # ==========================================
+      # 5. JAVA 11 FOR OLD GRADLE PROJECT
+      # ==========================================
+
+      - name: Setup Java 11 for Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+
+      # ==========================================
+      # 6. VERIFY JAVA
+      # ==========================================
+
+      - name: Verify Java
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "JAVA FOR GRADLE"
+          echo "=========================================="
+
+          java -version
+
+          echo ""
+          echo "JAVA_HOME=$JAVA_HOME"
+
+
+      # ==========================================
+      # 7. APPLY TUNNELBLICK XOR PATCHES
+      # ==========================================
 
       - name: Apply Tunnelblick XOR patches
         shell: bash
         run: |
           set -e
 
-          echo "=============================================="
-          echo "APPLYING OPENVPN XOR / SCRAMBLE PATCHES"
-          echo "=============================================="
+          echo "=========================================="
+          echo "APPLYING XOR / SCRAMBLE PATCHES"
+          echo "=========================================="
 
           PATCH_DIR="upstream/tunnelblick-patches"
           OPENVPN_DIR="upstream/main/src/main/cpp/openvpn"
 
-          echo "Patch directory:"
-          ls -la "$PATCH_DIR"
-
           echo ""
-          echo "OpenVPN directory:"
-          ls -la "$OPENVPN_DIR"
+          echo "Patch files:"
+
+          ls -la "$PATCH_DIR"
 
           echo ""
           echo "Copying patches..."
 
-          cp "$PATCH_DIR"/*.diff "$OPENVPN_DIR/"
+          cp \
+            "$PATCH_DIR"/*.diff \
+            "$OPENVPN_DIR/"
 
           cd "$OPENVPN_DIR"
 
@@ -150,14 +187,17 @@ jobs:
             06-tunnelblick-openvpn_xorpatch-e.diff
 
           echo ""
-          echo "=============================================="
-          echo "XOR PATCHES APPLIED SUCCESSFULLY"
-          echo "=============================================="
+          echo "=========================================="
+          echo "XOR PATCHES APPLIED"
+          echo "=========================================="
 
           echo ""
           echo "Checking scramble support..."
 
-          if grep -Rni "scramble" src/openvpn | head -30; then
+          if grep -Rni "scramble" \
+            src/openvpn \
+            | head -30
+          then
             echo ""
             echo "SCRAMBLE SUPPORT FOUND."
           else
@@ -175,12 +215,12 @@ jobs:
             -delete
 
           echo ""
-          echo "OpenVPN scramble engine is ready."
+          echo "OpenVPN XOR engine ready."
 
 
-      # ==================================================
-      # 6. CREATE SIGNING KEY
-      # ==================================================
+      # ==========================================
+      # 8. CREATE SIGNING KEY
+      # ==========================================
 
       - name: Create signing keystore
         shell: bash
@@ -201,16 +241,18 @@ jobs:
           echo "Keystore created."
 
 
-      # ==================================================
-      # 7. INSTALL OVPN30 DASHBOARD
-      # ==================================================
+      # ==========================================
+      # 9. INSTALL OVPN30 DASHBOARD
+      # ==========================================
 
       - name: Install OVPN30 dashboard
         shell: bash
         run: |
           set -e
 
-          echo "Checking custom OVPN30 files..."
+          echo "=========================================="
+          echo "INSTALLING OVPN30 DASHBOARD"
+          echo "=========================================="
 
           test -f OVPN30Activity.java
           test -f ovpn30_icon.xml
@@ -229,12 +271,12 @@ jobs:
             ovpn30_icon.xml \
             upstream/main/src/main/res/drawable/ovpn30_icon.xml
 
-          echo "OVPN30 dashboard installed."
+          echo "Dashboard installed."
 
 
-      # ==================================================
-      # 8. PATCH UI LAUNCHER
-      # ==================================================
+      # ==========================================
+      # 10. PATCH LAUNCHER
+      # ==========================================
 
       - name: Patch OVPN30 launcher
         shell: bash
@@ -296,9 +338,9 @@ jobs:
           PY
 
 
-      # ==================================================
-      # 9. PATCH APPLICATION NAME + ICON
-      # ==================================================
+      # ==========================================
+      # 11. PATCH APP NAME + ICON
+      # ==========================================
 
       - name: Patch application
         shell: bash
@@ -355,31 +397,32 @@ jobs:
                   xml_declaration=True
               )
 
-          print("Application name and icon patched.")
+          print(
+              "Application name and icon patched."
+          )
           PY
 
 
-      # ==================================================
-      # 10. VERIFY OVPN30 DASHBOARD
-      # ==================================================
+      # ==========================================
+      # 12. VERIFY OVPN30
+      # ==========================================
 
       - name: Verify OVPN30
         shell: bash
         run: |
           set -e
 
-          echo "=============================================="
-          echo "VERIFYING OVPN30"
-          echo "=============================================="
+          echo "=========================================="
+          echo "VERIFY OVPN30"
+          echo "=========================================="
 
           test -f \
             upstream/main/src/ui/java/de/blinkt/openvpn/activities/OVPN30Activity.java
 
-          echo "Dashboard: OK"
-
           test -f \
             upstream/main/src/main/res/drawable/ovpn30_icon.xml
 
+          echo "Dashboard: OK"
           echo "Icon: OK"
 
           echo ""
@@ -388,6 +431,151 @@ jobs:
           grep -n \
             "OVPN30Activity" \
             upstream/main/src/ui/AndroidManifest.xml
+
+          echo ""
+          echo "Checking scramble..."
+
+          grep -Rni \
+            "scramble" \
+            upstream/main/src/main/cpp/openvpn/src/openvpn \
+            | head -30
+
+          echo ""
+          echo "Verification complete."
+
+
+      # ==========================================
+      # 13. PREPARE GRADLE
+      # ==========================================
+
+      - name: Prepare Gradle
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -e
+
+          chmod +x gradlew
+
+          mkdir -p ~/.gradle
+
+          cat > ~/.gradle/gradle.properties <<EOF
+          android.useAndroidX=true
+          android.enableJetifier=true
+          android.enableUnitTestBinaryResources=false
+          org.gradle.jvmargs=-Xmx4096M
+          org.gradle.daemon=false
+
+          keystoreFile=$RUNNER_TEMP/ovpn30.keystore
+          keystorePassword=ovpn30password
+          keystoreAliasPassword=ovpn30password
+          keystoreAlias=ovpn30
+          EOF
+
+          echo "Gradle configured."
+
+          echo ""
+          echo "Java:"
+          java -version
+
+          echo ""
+          echo "Gradle:"
+          ./gradlew --version
+
+
+      # ==========================================
+      # 14. BUILD OVPN30
+      # ==========================================
+
+      - name: Build OVPN30
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -e
+
+          chmod +x gradlew
+
+          echo "=========================================="
+          echo "BUILDING OVPN30"
+          echo "=========================================="
+
+          ./gradlew \
+            :main:assembleUiRelease \
+            --no-daemon \
+            --stacktrace
+
+          echo ""
+          echo "BUILD FINISHED."
+
+
+      # ==========================================
+      # 15. LOCATE APK
+      # ==========================================
+
+      - name: Locate APK
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "SEARCHING FOR APK"
+          echo "=========================================="
+
+          find \
+            upstream/main/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            -print
+
+          APK=$(
+            find \
+              upstream/main/build/outputs/apk \
+              -type f \
+              -name "*.apk" \
+            | grep -E \
+              "ui.*release|release.*universal|universal" \
+            | head -n 1 || true
+          )
+
+          if [ -z "$APK" ]; then
+
+            APK=$(
+              find \
+                upstream/main/build/outputs/apk \
+                -type f \
+                -name "*.apk" \
+              | head -n 1 || true
+            )
+
+          fi
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK NOT FOUND"
+            exit 1
+          fi
+
+          mkdir -p release
+
+          cp \
+            "$APK" \
+            release/OVPN30-Scramble.apk
+
+          echo ""
+          echo "APK:"
+          ls -lh \
+            release/OVPN30-Scramble.apk
+
+
+      # ==========================================
+      # 16. UPLOAD APK
+      # ==========================================
+
+      - name: Upload OVPN30 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: OVPN30-Scramble
+          path: release/OVPN30-Scramble.apk
+          if-no-files-found: error
+          retention-days: 30droidManifest.xml
 
           echo ""
           echo "Application name:"
